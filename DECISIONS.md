@@ -8,7 +8,7 @@ The main writeup is in the [README](README.md). This is the longer version, with
 
 # What Terraform is, in one paragraph
 
-Normally you build things on AWS by clicking around in a web console — create a network here, launch a server there. Terraform lets you write all of that down in text files instead. You describe what you want, and Terraform builds it. Change the file, run it again, and it updates only what changed. Delete everything and run it again, and you get the exact same setup back.
+Normally I'd build things on AWS by clicking around in a web console — create a network here, launch a server there. Terraform lets me write all of that down in text files instead. I describe what I want, and Terraform builds it. Change the file, run it again, and it updates only what changed. Delete everything and run it again, and I get the exact same setup back.
 
 That's the whole point of this project. I'd already built this by hand. This time I wrote it down as code.
 
@@ -20,13 +20,13 @@ That's the whole point of this project. I'd already built this by hand. This tim
 
 Terraform needs to remember what it built. If it forgets, it will build a second copy of everything.
 
-It keeps that memory in a file. By default the file sits on your laptop.
+It keeps that memory in a file. By default that file sits on my laptop.
 
-**That's risky for two reasons.** If you lose the file, Terraform forgets everything it created — and you're left with servers running in AWS that you can no longer manage or shut down. And if two people run Terraform at the same time, they both write to that file at once and it gets corrupted.
+**That's risky for two reasons.** If I lost the file, Terraform would forget everything it created — and I'd be left with servers running in AWS that I could no longer manage or shut down. And if two people run Terraform at the same time, they both write to that file at once and it gets corrupted.
 
 So I put the memory file in cloud storage (S3) instead of on my laptop. It's encrypted, it's backed up, and Terraform locks it while it's being used so nobody else can touch it at the same time.
 
-**What I gave up:** I had to create that storage bucket by hand, before Terraform could run at all. Terraform can't create the bucket that holds its own memory — bit of a chicken and egg thing. One-time manual step, and I accepted it because the problem it prevents is the kind you can't recover from.
+**What I gave up:** I had to create that storage bucket by hand, before Terraform could run at all. Terraform can't create the bucket that holds its own memory — bit of a chicken and egg thing. One-time manual step, and I accepted it because the problem it prevents is the kind I couldn't recover from.
 
 ---
 
@@ -34,7 +34,7 @@ So I put the memory file in cloud storage (S3) instead of on my laptop. It's enc
 
 There are two ways to stop two people writing to the memory file at the same time. The older way uses a separate AWS database table. The newer way lets the storage bucket handle it by itself.
 
-Most guides still tell you to use the separate table. I did that first — then Terraform warned me it's being phased out, because the storage bucket can now do it natively.
+Most guides still say to use the separate table. I did that first — then Terraform warned me it's being phased out, because the storage bucket can now do it natively.
 
 So I switched. One less thing to create, one less thing that can break.
 
@@ -44,7 +44,7 @@ So I switched. One less thing to create, one less thing that can break.
 
 ## 3 — Keeping the code in one place
 
-Terraform lets you split your code into reusable chunks. That's useful when you have several environments — say a test setup and a live setup — and you want to reuse the same code for both.
+Terraform lets me split my code into reusable chunks. That's useful when there are several environments — say a test setup and a live setup — and the same code gets reused for both.
 
 I have one environment. Splitting it up would just mean jumping between more files to find one thing. So I kept it flat and readable.
 
@@ -66,7 +66,7 @@ In the manual build, labelling was inconsistent because I had to remember to do 
 
 ## 5 — How the security rules point at each other
 
-Think of security groups as bouncers. Each one decides who's allowed in.
+Security groups are like bouncers. Each one decides who's allowed in.
 
 The normal way to write a rule is by IP address: "let in anything coming from this address." But the load balancer's address changes — AWS moves it around. A rule based on an address would quietly stop working.
 
@@ -92,7 +92,7 @@ And every new server the system launches automatically gets the right badge, so 
 
 ## 6 — Which server image to use
 
-Every server needs an operating system image to boot from. You can either pin a specific one, or ask for "the latest."
+Every server needs an operating system image to boot from. I could either pin a specific one, or ask for "the latest."
 
 I asked for the latest. That way it always has the newest security patches.
 
@@ -142,7 +142,7 @@ There was a leftover piece from my old hand-built version still sitting in AWS. 
 
 Two options: delete it, or tell Terraform to adopt it. I deleted it, because I wanted everything owned by Terraform and the orphan had no reason to survive.
 
-But adopting it is the right answer when you *can't* delete something — a live production database, for instance. That's how you bring existing infrastructure under management without recreating it.
+But adopting it is the right answer when it *can't* be deleted — a live production database, for instance. That's how existing infrastructure gets brought under management without recreating it.
 
 **Also learned:** Terraform doesn't undo its work when it fails. The eight things it had already created stayed created. When I ran it again, it just picked up where it stopped.
 
@@ -174,7 +174,7 @@ Then I searched the log for the remote access agent. **Nothing.** It wasn't star
 
 **The cause:** when I asked for "the latest server image," my search was too broad. It also matched a stripped-down version of the image — and that stripped-down version doesn't include the remote access agent. Terraform had quietly picked it.
 
-Two fixes: narrowed the search so it only matches the full image, and installed the agent explicitly at startup so it doesn't depend on which image comes back.
+Two fixes: I narrowed the search so it only matches the full image, and I installed the agent explicitly at startup so it doesn't depend on which image comes back.
 
 **The way I found it is the point.** The log said everything *succeeded*. It was the **absence** of any mention of the agent that told me what was wrong. Nothing errored.
 
@@ -184,7 +184,7 @@ Two fixes: narrowed the search so it only matches the full image, and installed 
 
 The load balancer checks whether each server is alive by requesting the homepage. The first two checks come back as errors, then everything goes fine.
 
-Here's why. The startup script installs the web server, then a few other things, and *finally* writes the homepage file. In between, the web server is running but has no page to serve. So it returns an error.
+Here's why. My startup script installs the web server, then a few other things, and *finally* writes the homepage file. In between, the web server is running but has no page to serve. So it returns an error.
 
 That's exactly what the **startup grace period** is for. It tells the system: "ignore health checks for the first five minutes — this server is still booting."
 
@@ -200,7 +200,7 @@ Most people set a grace period because they were told to. I can point at the exa
 
 In my hand-built version, I let the system auto-create the load balancer. AWS attached the **wrong security badge** to it. The chain broke. Every server was marked unhealthy and the site returned an error.
 
-I spent time checking the wrong things — the web server was fine, the network routes were fine, the security rules themselves were fine. The problem was which badge the load balancer was *wearing* — which in the AWS console is a completely different screen from where you write the rules. Nothing connects the two.
+I spent time checking the wrong things — the web server was fine, the network routes were fine, the security rules themselves were fine. The problem was which badge the load balancer was *wearing* — which in the AWS console is a completely different screen from where I'd written the rules. Nothing connects the two.
 
 In Terraform, it's all in one file:
 
@@ -216,7 +216,7 @@ resource "aws_lb" "main" {
 }
 ```
 
-The load balancer **cannot exist** without saying which badge it wears. It's required. If I gave it the wrong one, the servers' rule would then be pointing at a badge that nobody is wearing — and you'd see that in the code, before anything gets built.
+The load balancer **cannot exist** without saying which badge it wears. It's required. If I gave it the wrong one, the servers' rule would then be pointing at a badge that nobody is wearing — and I'd see that in the code, before anything got built.
 
 It isn't stopped by a validation rule. It's stopped because **the wiring is written down in one place**, instead of being spread across three different screens.
 
@@ -247,7 +247,7 @@ The web server logs now get shipped off the machine and into AWS's logging servi
 10.0.1.190 - - "GET / HTTP/1.1" 200 69  "ELB-HealthChecker/2.0"
 ```
 
-You can watch the load balancer checking on the server, getting an error while it's still starting up, then getting a success once it's ready.
+I can watch the load balancer checking on the server, getting an error while it's still starting up, then getting a success once it's ready.
 
 **In my hand-built version, these lines would not have existed at all.** The wrong badge meant the load balancer never reached the server. The log would have been completely empty.
 
@@ -271,7 +271,7 @@ I also turned on network-level logging, which records every connection attempt a
 
 The URL served the page. The server shown was one sitting in a private part of the network, with no public address at all — reachable only through the load balancer.
 
-Both servers were healthy on the **first run**. Same architecture, same services as the hand-built version. Different outcome — because the wiring is declared in one file, where a mistake is visible before you build anything, instead of after.
+Both servers were healthy on the **first run**. Same architecture, same services as the hand-built version. Different outcome — because the wiring is declared in one file, where a mistake is visible before anything gets built, instead of after.
 
 ---
 
@@ -393,7 +393,7 @@ Before I built anything, Terraform predicted it would create exactly 18 things f
 
 - **No threat detection.** AWS has services for this. At this scale, each one would cost more than the entire rest of the project.
 
-- **I can read the database password.** My own account has permission. In a real company, engineers shouldn't be able to read production passwords at all — only the application should. You debug through logs, not by reading passwords.
+- **I can read the database password.** My own account has permission. In a real company, engineers shouldn't be able to read production passwords at all — only the application should. Debugging happens through logs, not by reading passwords.
 
 That last one is worth being precise about. **I can read it because I have permission — and every time I do, it's logged.** That's *access control*, not *knowledge*. Take the permission away and I lose access immediately, without changing the password.
 
@@ -405,7 +405,7 @@ Right now I run Terraform from my own laptop. In a real team that's wrong. It sh
 
 **But automatically *applying* infrastructure changes on every push is worse than having no pipeline at all.**
 
-Here's why. A single bad line can delete a database, with nobody having looked at what was about to happen. You can undo a broken app in minutes. You cannot undo a deleted database.
+Here's why. A single bad line can delete a database, with nobody having looked at what was about to happen. A broken app can be undone in minutes. A deleted database cannot.
 
 The right way: someone proposes a change → the system automatically works out what it *would* do → that gets posted for a human to read → and only after they approve does anything actually happen.
 
