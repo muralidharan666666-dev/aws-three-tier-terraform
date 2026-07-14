@@ -8,9 +8,9 @@ The main writeup is in the [README](README.md). This is the longer version, with
 
 # What Terraform is, in one paragraph
 
-Normally I'd build things on AWS by clicking around in a web console — create a network here, launch a server there. Terraform lets me write all of that down in text files instead. I describe what I want, and Terraform builds it. Change the file, run it again, and it updates only what changed. Delete everything and run it again, and I get the exact same setup back.
+Terraform lets me define infrastructure in text files instead of clicking through a console. I describe what I want — a network, servers, a database — and Terraform builds it. Change the file and run it again, and it updates only what changed. Destroy everything and run it again, and I get an identical setup back.
 
-That's the whole point of this project. I'd already built this by hand. This time I wrote it down as code.
+I'd already built this stack by hand once. That was the point of doing it — to understand what the pieces actually do before automating them. This time I wrote it down as code, so it can be rebuilt, reviewed, and fixed once rather than every time.
 
 ---
 
