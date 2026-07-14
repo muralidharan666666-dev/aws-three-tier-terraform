@@ -90,7 +90,7 @@ variable "public_subnet_cidrs" {
 }
 ```
 
-The subnet resource uses `count = length(var.public_subnet_cidrs)`. Add a third AZ and a third CIDR to those lists and you get a third subnet — without touching a single resource block. That's the bit that actually matters about doing this as code.
+The subnet resource uses `count = length(var.public_subnet_cidrs)`. Add a third AZ and a third CIDR to those lists and Terraform builds a third subnet — without touching a single resource block. That's the bit that actually matters about doing this as code.
 
 ![Subnets](screenshots/06-vpc-subnets.png)
 
@@ -149,7 +149,7 @@ All 47 resources back in 15 minutes 36 seconds. New ALB DNS, new VPC ID, new dat
 
 ### Problem 1 — the 502 from the manual build, and why it can't happen now
 
-In the console build I let the ASG auto-create the load balancer, and AWS attached SG-App to the ALB instead of SG-ALB. Every target went Unhealthy. I checked Apache, checked route tables, checked SG-App's rules — all fine. The problem was which SG was *attached* to the ALB, and in the console that's a completely different screen from where you write the SG rules.
+In the console build I let the ASG auto-create the load balancer, and AWS attached SG-App to the ALB instead of SG-ALB. Every target went Unhealthy. I checked Apache, checked route tables, checked SG-App's rules — all fine. The problem was which SG was *attached* to the ALB, and in the console that's a completely different screen from where I'd written the SG rules.
 
 In Terraform it's all in one file:
 
@@ -204,7 +204,7 @@ DBSubnetGroupAlreadyExists
 
 Turned out I still had a DB subnet group with the same name sitting in the account from the manual build. It existed in AWS but wasn't in any state file — an orphan that nothing was managing.
 
-Two options: delete it, or use `terraform import` to pull it into state. I deleted it, because I wanted the stack fully owned by Terraform and the orphan had no reason to survive. But `import` is the right answer when you can't delete something — a production database, for instance.
+Two options: delete it, or use `terraform import` to pull it into state. I deleted it, because I wanted the stack fully owned by Terraform and the orphan had no reason to survive. But `import` is the right answer when something can't be deleted — a production database, for instance.
 
 Also learned Terraform doesn't roll back when it fails. The 8 resources it had already created stayed created and were recorded in state. Re-running apply just picked up where it stopped.
 
@@ -280,7 +280,7 @@ CloudTrail records every AWS API call, so "who deleted the database" has an answ
 
 ## Decisions I made, and what I gave up
 
-**Remote state on S3.** Local state is fine on one laptop. It falls apart as soon as a second person or a pipeline runs Terraform — two applies at once silently overwrite each other's record of what exists, and a lost state file means AWS resources you can't destroy any more. The cost is that the bucket has to be created by hand first.
+**Remote state on S3.** Local state is fine on one laptop. It falls apart as soon as a second person or a pipeline runs Terraform — two applies at once silently overwrite each other's record of what exists, and a lost state file means AWS resources Terraform can no longer destroy. The cost is that the bucket has to be created by hand first.
 
 Every tutorial says to use a DynamoDB table for locking. I did, then Terraform 1.15 warned me `dynamodb_table` is deprecated because S3 now does conditional writes natively. Switched to `use_lockfile`. One less resource to manage. But most existing codebases still use DynamoDB, so I made sure I understood both.
 
@@ -332,13 +332,13 @@ Stuff production would need that this doesn't have. I know these are missing —
 
 **No CI.** I run `terraform apply` from my laptop. For one person on one project that's honestly fine. It breaks down when two people can both apply, when nobody's reviewing a change that says `1 to destroy` on the production database, and when there's no record of who applied what.
 
-The way it should work is: open a pull request, CI runs `plan`, the plan output shows up as a comment, someone reads it, and apply only runs after they approve. The part I'd stress is that auto-applying on every push is worse than having no pipeline at all — a bad variable can destroy an RDS instance with nobody having looked at the diff. You can roll application code back in minutes. You can't un-delete a database. The person reading the plan is the whole point.
+The way it should work is: open a pull request, CI runs `plan`, the plan output shows up as a comment, someone reads it, and apply only runs after they approve. The part I'd stress is that auto-applying on every push is worse than having no pipeline at all — a bad variable can destroy an RDS instance with nobody having looked at the diff. A broken app can be rolled back in minutes. A deleted database cannot. The person reading the plan is the whole point.
 
 **One NAT Gateway.** Only one, sitting in us-east-1a. If that AZ goes down, the private instances in us-east-1b lose outbound internet even though they're still running. NAT is about $32/month and it's the most expensive thing in the build, so I went with one to save money. Production would have one per AZ, with each private subnet routing to the NAT in its own AZ. It's a single point of failure and I picked it on purpose.
 
 **AMI isn't pinned.** `most_recent = true` means the image can change between applies. This already caused Problem 5 — I got the minimal AL2023 variant, which has no SSM agent, and Session Manager quietly stopped working. Production pins a specific tested AMI and updates it deliberately. I know why now, because it bit me.
 
-**I can read the DB password.** My IAM user has permission to read it from Secrets Manager. In a real setup, engineers shouldn't be able to read production credentials at all — only the application's role should. You debug through logs and metrics, not by reading passwords. IAM database authentication would get rid of the password entirely, which is the better answer.
+**I can read the DB password.** My IAM user has permission to read it from Secrets Manager. In a real setup, engineers shouldn't be able to read production credentials at all — only the application's role should. Debugging happens through logs and metrics, not by reading passwords. IAM database authentication would get rid of the password entirely, which is the better answer.
 
 **No password rotation.** Secrets Manager supports it and I didn't turn it on. Probably the mildest one here — the password is random, never chosen by a human, never in the code, and every read gets logged in CloudTrail. Plenty of production systems don't rotate DB passwords either. Worth having, not urgent.
 
@@ -348,13 +348,13 @@ The way it should work is: open a pull request, CI runs `plan`, the plan output 
 
 ## What I learned
 
-The manual build taught me how the network layers isolate the database. This one taught me something different — a bug you fix by hand is a bug you'll fix again.
+The manual build taught me how the network layers isolate the database. This one taught me something different — a bug I fix by hand is a bug I'll fix again.
 
-The 502 and the mariadb105 problem both cost me real time in the console build. Both are impossible now. The SG chain is declared in one file where a mismatch is visible before you deploy anything. The mariadb105 install sits in the launch template, so every instance that ever launches has it. I didn't debug either of them once during this whole build.
+The 502 and the mariadb105 problem both cost me real time in the console build. Both are impossible now. The SG chain is declared in one file where a mismatch is visible before anything gets deployed. The mariadb105 install sits in the launch template, so every instance that ever launches has it. I didn't debug either of them once during this whole build.
 
-That's what infrastructure as code actually gets you. Not "automation" as a word — the specific fact that the thing you already worked out stays worked out.
+That's what infrastructure as code actually buys. Not "automation" as a word — the specific fact that the thing I already worked out stays worked out.
 
-And then I hit three new problems anyway, which is the honest version of this. Writing your old bugs into code doesn't stop you finding new ones. It just means you only find each one once.
+And then I hit three new problems anyway, which is the honest version of this. Writing old bugs into code doesn't stop new ones appearing. It just means each one only gets found once.
 
 ---
 
