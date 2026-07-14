@@ -1,0 +1,15 @@
+# Terraform state — never commit this
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Provider binaries — huge, downloadable
+.terraform/
+.terraform.lock.hcl
+
+# Variable files that may contain secrets
+*.tfvars
+!example.tfvars
+
+# Crash logs
+crash.log
