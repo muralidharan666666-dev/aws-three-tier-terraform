@@ -96,27 +96,13 @@ Every server needs an operating system image to boot from. I could either pin a 
 
 I asked for the latest. That way it always has the newest security patches.
 
-**What I gave up:** "the latest" can change without warning. That's not hypothetical — **it caused Problem 6 below.** For a real production system I'd pin a specific tested image and update it deliberately.
+**What I gave up:** "the latest" can change without warning. That's not hypothetical — **it caused Problem 4 below.** For a real production system I'd pin a specific tested image and update it deliberately.
 
 ---
 
 # Problems I hit
 
-## 1 — Downloaded the wrong version of Terraform
-
-Grabbed the Mac version by mistake. The file wouldn't run on Windows and the terminal just said "command not found."
-
-Then I found the correct Windows file was buried in a subfolder, in a place the computer doesn't look. Moved it to the right place. Fixed.
-
----
-
-## 2 — Warning about the old locking method
-
-Terraform started up fine but warned me the locking approach I'd used is being phased out. Switched to the newer one and reran it. Clean.
-
----
-
-## 3 — The website wouldn't load, and it wasn't AWS's fault
+## 1 — The website wouldn't load, and it wasn't AWS's fault
 
 Everything came up healthy. But when I put the URL in my browser, it just hung and timed out.
 
@@ -130,7 +116,7 @@ Known gap, on purpose.
 
 ---
 
-## 4 — Something already existed that shouldn't have
+## 2 — Something already existed that shouldn't have
 
 Terraform stopped partway through with:
 
@@ -148,7 +134,7 @@ But adopting it is the right answer when it *can't* be deleted — a live produc
 
 ---
 
-## 5 — Terraform said it worked. The running servers disagreed.
+## 3 — Terraform said it worked. The running servers disagreed.
 
 I updated the server template to give servers permission to be accessed remotely. Terraform said it succeeded.
 
@@ -164,7 +150,7 @@ Fixed it by telling the system to automatically replace its servers whenever the
 
 ---
 
-## 6 — The remote access agent wasn't installed
+## 4 — The remote access agent wasn't installed
 
 Fresh server. Still couldn't connect remotely. And this time the permissions *were* correct, so it wasn't the same problem as before.
 
@@ -180,7 +166,7 @@ Two fixes: I narrowed the search so it only matches the full image, and I instal
 
 ---
 
-## 7 — Two failed health checks at startup, every time
+## 5 — Two failed health checks at startup, every time
 
 The load balancer checks whether each server is alive by requesting the homepage. The first two checks come back as errors, then everything goes fine.
 
@@ -330,7 +316,7 @@ And **nobody typed a password.** Terraform generated a fresh random one, gave it
 
 ---
 
-# The numbers
+# How long everything took
 
 ## By layer
 
@@ -359,15 +345,6 @@ Before I built anything, Terraform predicted it would create exactly 18 things f
 | Build it all back | **15 min 36 sec** |
 | Clicks required | 0 |
 | Bugs re-debugged | 0 |
-
----
-
-# Setup
-
-- Terraform v1.15.8
-- AWS provider v5.100.0
-- Region: us-east-1
-- Memory file stored in S3, encrypted, with locking
 
 ---
 
