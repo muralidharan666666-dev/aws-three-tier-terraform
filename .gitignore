@@ -5,7 +5,6 @@
 
 # Provider binaries — huge, downloadable
 .terraform/
-.terraform.lock.hcl
 
 # Variable files that may contain secrets
 *.tfvars
