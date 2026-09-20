@@ -1,5 +1,9 @@
 # AWS Three-Tier Infrastructure with Terraform
+> **TL;DR:** 47 AWS resources defined in Terraform: a VPC across 2 AZs, ALB + Auto Scaling, Multi-AZ RDS MySQL, Secrets Manager, Session Manager (no SSH), VPC Flow Logs and CloudTrail. Remote state in S3 with locking. `terraform destroy` then `terraform apply` rebuilds everything in about 15 minutes.
 
+**Contents:** [Architecture](#architecture) | [Services](#services-used) | [Problems I ran into](#problems-i-ran-into) | [Observability](#observability-and-why-i-care-about-it-now) | [Decisions](#decisions-i-made-and-what-i-gave-up) | [Cost](#rough-cost-breakdown) | [Running it](#running-it) | [What I learned](#what-i-learned)
+
+---
 ## Why I built this
 
 I'd already built this same three-tier setup by hand in the AWS console. It worked in the end, but it broke twice on the way — the ALB kept returning 502 because the wrong security group got attached, and I couldn't install a MySQL client because Amazon Linux 2023 doesn't have a `mysql` package.
