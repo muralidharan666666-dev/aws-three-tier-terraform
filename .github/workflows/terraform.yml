@@ -205,3 +205,34 @@ jobs:
       # happened at the "production" environment gate
       - name: terraform apply
         run: terraform apply -auto-approve -no-color -lock-timeout=5m
+
+  # ------------------------------------------------------------
+  # 4. Security scan. Reads the .tf files only, no AWS access.
+  # ------------------------------------------------------------
+  security:
+    name: Security scan (Checkov)
+    runs-on: ubuntu-latest
+    env:
+      ANSI_COLORS_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Checkov
+        run: pipx install checkov==3.3.19
+
+      # --soft-fail: show findings, but don't block the PR yet
+      - name: Run Checkov
+        run: |
+          checkov --directory . --framework terraform \
+            --quiet --compact --skip-download --soft-fail \
+            2>&1 | tee checkov.txt
+
+      - name: Add findings to the run summary
+        if: always()
+        run: |
+          {
+            echo "### Checkov security scan"
+            echo '```'
+            cat checkov.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
