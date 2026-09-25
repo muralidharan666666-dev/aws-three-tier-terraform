@@ -115,6 +115,7 @@ resource "aws_iam_role" "apply" {
 # create IAM roles can grant itself any permission anyway. The real
 # control is WHO can assume this role - the trust policy above.
 resource "aws_iam_role_policy_attachment" "apply_admin" {
+  #checkov:skip=CKV_AWS_274:The stack creates IAM roles, so a narrower policy would not really limit it. Only an approved production job can assume this role
   role       = aws_iam_role.apply.name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }

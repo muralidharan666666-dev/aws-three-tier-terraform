@@ -1,0 +1,239 @@
+name: Terraform
+
+on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "**.png"
+      - "screenshots/**"
+      - "LICENSE"
+      - "bootstrap/**"
+  push:
+    branches: [main]
+    paths-ignore:
+      - "**.md"
+      - "**.png"
+      - "screenshots/**"
+      - "LICENSE"
+      - "bootstrap/**"
+
+# Only one Terraform run at a time. Never cancel one halfway.
+concurrency:
+  group: terraform
+  cancel-in-progress: false
+
+# No job gets any permission unless it asks for it below
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.15.8"
+  AWS_REGION: "us-east-1"
+  PLAN_ROLE: "arn:aws:iam::561067234915:role/github-terraform-plan"
+  APPLY_ROLE: "arn:aws:iam::561067234915:role/github-terraform-apply"
+  TF_IN_AUTOMATION: "true"
+  TF_INPUT: "false"
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  # ------------------------------------------------------------
+  # 1. Format and validate. No AWS access at all.
+  # ------------------------------------------------------------
+  checks:
+    name: Format and validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff
+
+      - name: terraform init (no backend, no AWS)
+        run: terraform init -backend=false
+
+      - name: terraform validate
+        run: terraform validate
+
+  # ------------------------------------------------------------
+  # 2. Plan with the READ-ONLY role. Runs on PRs and on main.
+  # ------------------------------------------------------------
+  plan:
+    name: Plan
+    needs: checks
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # lets the job ask GitHub for an OIDC ID card
+      pull-requests: write  # lets the job comment on the PR
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Log in to AWS (read-only plan role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.PLAN_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terraform init
+        run: terraform init
+
+      - name: terraform plan
+        id: plan
+        continue-on-error: true
+        run: terraform plan -no-color -lock-timeout=5m 2>&1 | tee plan.txt
+
+      - name: Add the plan to the run summary
+        run: |
+          {
+            echo "### Terraform plan: ${{ steps.plan.outcome }}"
+            echo '```'
+            cat plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment the plan on the pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v9
+        env:
+          PLAN_OUTCOME: ${{ steps.plan.outcome }}
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- terraform-plan-comment -->';
+            let plan = fs.readFileSync('plan.txt', 'utf8');
+
+            // The one-line result, e.g. "Plan: 47 to add, 0 to change, 0 to destroy."
+            const summary = (plan.match(/^(Plan: .*|No changes\..*)$/m) || ['see full plan below'])[0];
+
+            // GitHub comments have a size limit. Keep the end, where the result is.
+            const max = 60000;
+            if (plan.length > max) {
+              plan = '...(start cut off - full plan is in the run summary)...\n' + plan.slice(-max);
+            }
+
+            const status = process.env.PLAN_OUTCOME === 'success' ? 'succeeded' : 'FAILED';
+            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const fence = '```';
+
+            const body = [
+              marker,
+              `### Terraform plan ${status}: ${summary}`,
+              '',
+              '<details><summary>Show full plan</summary>',
+              '',
+              fence,
+              plan,
+              fence,
+              '',
+              '</details>',
+              '',
+              `Made with the read-only plan role, commit ${sha}.`,
+            ].join('\n');
+
+            // Update the old comment instead of adding a new one on every push
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+            const old = comments.find(c => c.user.type === 'Bot' && c.body.includes(marker));
+
+            if (old) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: old.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail the job if the plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
+
+  # ------------------------------------------------------------
+  # 3. Apply with the ADMIN role. Only on main, only after approval.
+  # ------------------------------------------------------------
+  apply:
+    name: Apply (needs approval)
+    needs: plan
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Log in to AWS (apply role)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ env.APPLY_ROLE }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: terraform init
+        run: terraform init
+
+      # -auto-approve is safe here: the human approval already
+      # happened at the "production" environment gate
+      - name: terraform apply
+        run: terraform apply -auto-approve -no-color -lock-timeout=5m
+
+  # ------------------------------------------------------------
+  # 4. Security scan. Reads the .tf files only, no AWS access.
+  # ------------------------------------------------------------
+  security:
+    name: Security scan (Checkov)
+    runs-on: ubuntu-latest
+    env:
+      ANSI_COLORS_DISABLED: "true"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install Checkov
+        run: pipx install checkov==3.3.19
+
+      # Strict: any new finding fails this job. Accepted risks are marked
+      # in the .tf files with #checkov:skip and a reason next to each one.
+      - name: Run Checkov
+        run: |
+          checkov --directory . --framework terraform \
+            --quiet --compact --skip-download \
+            2>&1 | tee checkov.txt
+
+      - name: Add findings to the run summary
+        if: always()
+        run: |
+          {
+            echo "### Checkov security scan"
+            echo '```'
+            cat checkov.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

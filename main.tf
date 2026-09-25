@@ -30,7 +30,7 @@ resource "aws_subnet" "public" {
   vpc_id                  = aws_vpc.main.id
   cidr_block              = var.public_subnet_cidrs[count.index]
   availability_zone       = var.availability_zones[count.index]
-  map_public_ip_on_launch = true
+  map_public_ip_on_launch = false # ALB and NAT get their own IPs, nothing else here needs one
 
   tags = {
     Name = "${var.project_name}-public-${var.availability_zones[count.index]}"
@@ -151,6 +151,8 @@ resource "aws_route_table_association" "private_db" {
 # SG-ALB — the only security group exposed to the internet
 # ---------------------------------------------------------------------------
 resource "aws_security_group" "alb" {
+  #checkov:skip=CKV_AWS_260:Public ALB has to accept port 80 from the internet. No domain name so no ACM certificate yet. HTTPS is the first item in Known gaps
+  #checkov:skip=CKV_AWS_382:ALB needs outbound to reach the targets and health checks. Could be narrowed to SG-App later
   name        = "${var.project_name}-sg-alb"
   description = "ALB: accepts HTTP from the internet"
   vpc_id      = aws_vpc.main.id
@@ -182,6 +184,7 @@ resource "aws_security_group" "alb" {
 # Note: security_groups, not cidr_blocks. Identity, not IP address.
 # ---------------------------------------------------------------------------
 resource "aws_security_group" "app" {
+  #checkov:skip=CKV_AWS_382:App tier needs outbound through NAT for dnf, SSM, CloudWatch and Secrets Manager. VPC endpoints would remove this but cost more than NAT
   name        = "${var.project_name}-sg-app"
   description = "App tier: accepts HTTP only from the ALB"
   vpc_id      = aws_vpc.main.id
@@ -225,13 +228,9 @@ resource "aws_security_group" "db" {
     security_groups = [aws_security_group.app.id]
   }
 
-  egress {
-    description = "All outbound"
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
+  # No outbound rules. The database never starts a connection, it only
+  # answers the app tier, and SGs are stateful so the replies still go out.
+  egress = []
 
   tags = {
     Name = "${var.project_name}-sg-db"
@@ -272,6 +271,15 @@ resource "aws_launch_template" "app" {
     name = aws_iam_instance_profile.ec2_ssm.name
   }
 
+  # IMDSv2 only. With v1, an SSRF bug in the app could read the instance
+  # role's credentials with one plain GET request. Nothing in the user data
+  # calls the metadata endpoint directly, and the SSM + CloudWatch agents
+  # both support v2, so this doesn't break anything.
+  metadata_options {
+    http_endpoint               = "enabled"
+    http_tokens                 = "required"
+    http_put_response_hop_limit = 1
+  }
 
   user_data = base64encode(<<-EOF
     #!/bin/bash
@@ -351,11 +359,18 @@ resource "aws_launch_template" "app" {
 # exactly how SG-App ended up attached here and caused the 502.
 # ---------------------------------------------------------------------------
 resource "aws_lb" "main" {
+  #checkov:skip=CKV_AWS_91:ALB access logs need another S3 bucket. VPC Flow Logs and Apache logs already cover debugging
+  #checkov:skip=CKV_AWS_150:Deletion protection would block terraform destroy, which I run after every test (Known gaps)
+  #checkov:skip=CKV2_AWS_20:Redirect to HTTPS needs a certificate. No domain name so no ACM certificate yet. HTTPS is the first item in Known gaps
+  #checkov:skip=CKV2_AWS_28:WAF costs more than the rest of the stack at this scale (Known gaps)
   name               = "${var.project_name}-alb"
   internal           = false
   load_balancer_type = "application"
   security_groups    = [aws_security_group.alb.id]
   subnets            = aws_subnet.public[*].id
+
+  # Drop requests with malformed headers instead of passing them to Apache
+  drop_invalid_header_fields = true
 
   tags = {
     Name = "${var.project_name}-alb"
@@ -367,6 +382,7 @@ resource "aws_lb" "main" {
 # which of them are allowed to receive traffic
 # ---------------------------------------------------------------------------
 resource "aws_lb_target_group" "app" {
+  #checkov:skip=CKV_AWS_378:ALB to EC2 traffic stays inside private subnets. No domain name so no ACM certificate yet. HTTPS is the first item in Known gaps
   name     = "${var.project_name}-tg"
   port     = 80
   protocol = "HTTP"
@@ -392,6 +408,8 @@ resource "aws_lb_target_group" "app" {
 # Listener — "anything arriving on port 80, forward to the target group"
 # ---------------------------------------------------------------------------
 resource "aws_lb_listener" "http" {
+  #checkov:skip=CKV_AWS_2:No domain name so no ACM certificate yet. HTTPS is the first item in Known gaps
+  #checkov:skip=CKV_AWS_103:TLS policy only applies to an HTTPS listener. No domain name so no ACM certificate yet. HTTPS is the first item in Known gaps
   load_balancer_arn = aws_lb.main.arn
   port              = 80
   protocol          = "HTTP"
@@ -523,6 +541,8 @@ resource "random_password" "db" {
 }
 
 resource "aws_secretsmanager_secret" "db" {
+  #checkov:skip=CKV_AWS_149:Uses the AWS managed key. A customer managed KMS key is 1 USD a month per key
+  #checkov:skip=CKV2_AWS_57:Rotation not turned on yet (Known gaps). Password is random and every read is in CloudTrail
   name                    = "${var.project_name}/db/credentials"
   description             = "RDS master credentials, generated by Terraform"
   recovery_window_in_days = 0 # 0 = delete immediately on destroy (dev only)
@@ -562,6 +582,11 @@ resource "aws_db_subnet_group" "main" {
 # No public access. No route from the internet exists at all.
 # ---------------------------------------------------------------------------
 resource "aws_db_instance" "main" {
+  #checkov:skip=CKV_AWS_226:Engine version is pinned on purpose. Auto minor upgrades would drift from the code, upgrades go through a PR instead
+  #checkov:skip=CKV_AWS_129:Exporting RDS logs to CloudWatch costs money. Not needed for a test stack
+  #checkov:skip=CKV_AWS_161:IAM database auth is in Known gaps. Password lives in Secrets Manager for now
+  #checkov:skip=CKV_AWS_293:Deletion protection would block terraform destroy, which I run after every test (Known gaps)
+  #checkov:skip=CKV_AWS_118:Enhanced monitoring costs money. Basic CloudWatch metrics are enough here
   identifier = "${var.project_name}-db"
 
   engine         = "mysql"
@@ -587,6 +612,7 @@ resource "aws_db_instance" "main" {
   publicly_accessible = false
 
   backup_retention_period = 7
+  copy_tags_to_snapshot   = true
   skip_final_snapshot     = true  # dev only — production would keep a snapshot
   deletion_protection     = false # dev only — production would be true
 
@@ -609,6 +635,8 @@ data "aws_caller_identity" "current" {}
 # health check would have shown REJECT on port 80.
 # ---------------------------------------------------------------------------
 resource "aws_cloudwatch_log_group" "flow_logs" {
+  #checkov:skip=CKV_AWS_158:Encrypted with the AWS managed key. A customer managed KMS key costs extra
+  #checkov:skip=CKV_AWS_338:Short retention on purpose to keep the bill down. Production would keep a year
   name              = "/aws/vpc/${var.project_name}/flow-logs"
   retention_in_days = var.log_retention_days
 
@@ -667,6 +695,11 @@ resource "aws_flow_log" "vpc" {
 # "Who deleted the database?" — without this, you will never know.
 # ---------------------------------------------------------------------------
 resource "aws_s3_bucket" "cloudtrail" {
+  #checkov:skip=CKV_AWS_18:Access logging needs a second bucket just for logs of the log bucket. Overkill here
+  #checkov:skip=CKV_AWS_21:Log file validation already detects tampering, and logs expire after 90 days anyway
+  #checkov:skip=CKV_AWS_144:Cross-region replication doubles storage for a test stack
+  #checkov:skip=CKV_AWS_145:Encrypted with SSE-S3 (AES256). A customer managed KMS key costs extra
+  #checkov:skip=CKV2_AWS_62:Nothing needs to react to new log files
   bucket        = "${var.project_name}-cloudtrail-${data.aws_caller_identity.current.account_id}"
   force_destroy = true # dev only — lets terraform destroy remove a non-empty bucket
 
@@ -728,11 +761,14 @@ resource "aws_s3_bucket_policy" "cloudtrail" {
 }
 
 resource "aws_cloudtrail" "main" {
+  #checkov:skip=CKV_AWS_35:Log files are encrypted by the bucket (SSE-S3). A customer managed KMS key costs extra
+  #checkov:skip=CKV_AWS_252:No alerting set up for new log files
+  #checkov:skip=CKV2_AWS_10:Sending the trail to CloudWatch Logs costs extra. S3 plus log file validation is enough here
   name                          = "${var.project_name}-trail"
   s3_bucket_name                = aws_s3_bucket.cloudtrail.id
   include_global_service_events = true
-  is_multi_region_trail         = false # single region — cost decision
-  enable_log_file_validation    = true  # detects tampering with the log files
+  is_multi_region_trail         = true # all regions, attackers like the ones nobody watches. First copy of management events is free
+  enable_log_file_validation    = true # detects tampering with the log files
 
   depends_on = [aws_s3_bucket_policy.cloudtrail]
 
@@ -747,6 +783,8 @@ resource "aws_cloudtrail" "main" {
 # routinely, so a failed request from 20 minutes ago is unrecoverable.
 # ---------------------------------------------------------------------------
 resource "aws_cloudwatch_log_group" "apache" {
+  #checkov:skip=CKV_AWS_158:Encrypted with the AWS managed key. A customer managed KMS key costs extra
+  #checkov:skip=CKV_AWS_338:Short retention on purpose to keep the bill down. Production would keep a year
   name              = "/aws/ec2/${var.project_name}/apache"
   retention_in_days = var.log_retention_days
 
@@ -761,5 +799,37 @@ resource "aws_iam_role_policy_attachment" "cloudwatch_agent" {
   policy_arn = "arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"
 }
 
+# ---------------------------------------------------------------------------
+# Expire CloudTrail logs after 90 days. Without this they pile up forever
+# and so does the S3 bill.
+# ---------------------------------------------------------------------------
+resource "aws_s3_bucket_lifecycle_configuration" "cloudtrail" {
+  bucket = aws_s3_bucket.cloudtrail.id
 
+  rule {
+    id     = "expire-old-logs"
+    status = "Enabled"
 
+    filter {}
+
+    expiration {
+      days = 90
+    }
+
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Lock down the VPC's default security group. Nothing in this stack uses it,
+# so it should allow nothing. No rules here = Terraform strips all its rules.
+# ---------------------------------------------------------------------------
+resource "aws_default_security_group" "default" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "${var.project_name}-default-sg-locked"
+  }
+}
