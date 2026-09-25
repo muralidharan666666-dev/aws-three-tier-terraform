@@ -220,11 +220,12 @@ jobs:
       - name: Install Checkov
         run: pipx install checkov==3.3.19
 
-      # --soft-fail: show findings, but don't block the PR yet
+      # Strict: any new finding fails this job. Accepted risks are marked
+      # in the .tf files with #checkov:skip and a reason next to each one.
       - name: Run Checkov
         run: |
           checkov --directory . --framework terraform \
-            --quiet --compact --skip-download --soft-fail \
+            --quiet --compact --skip-download \
             2>&1 | tee checkov.txt
 
       - name: Add findings to the run summary
