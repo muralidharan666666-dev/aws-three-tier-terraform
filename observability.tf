@@ -55,7 +55,7 @@ resource "aws_iam_role_policy" "flow_logs" {
 }
 
 resource "aws_flow_log" "vpc" {
-  vpc_id          = aws_vpc.main.id
+  vpc_id          = module.vpc.vpc_id
   traffic_type    = "ALL" # ACCEPT, REJECT, and ALL — we want everything
   iam_role_arn    = aws_iam_role.flow_logs.arn
   log_destination = aws_cloudwatch_log_group.flow_logs.arn

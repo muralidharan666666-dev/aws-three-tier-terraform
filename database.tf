@@ -42,7 +42,7 @@ resource "aws_secretsmanager_secret_version" "db" {
 # ---------------------------------------------------------------------------
 resource "aws_db_subnet_group" "main" {
   name       = "${var.project_name}-db-subnet-group"
-  subnet_ids = aws_subnet.private_db[*].id
+  subnet_ids = module.vpc.private_db_subnet_ids
 
   tags = {
     Name = "${var.project_name}-db-subnet-group"
