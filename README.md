@@ -1,7 +1,7 @@
 # AWS Three-Tier Infrastructure with Terraform
-> **TL;DR:** 47 AWS resources defined in Terraform: a VPC across 2 AZs, ALB + Auto Scaling, Multi-AZ RDS MySQL, Secrets Manager, Session Manager (no SSH), VPC Flow Logs and CloudTrail. Remote state in S3 with locking. `terraform destroy` then `terraform apply` rebuilds everything in about 15 minutes.
+> **TL;DR:** 47 AWS resources defined in Terraform: a VPC across 2 AZs, ALB + Auto Scaling, Multi-AZ RDS MySQL, Secrets Manager, Session Manager (no SSH), VPC Flow Logs and CloudTrail. Remote state in S3 with locking. Deployed through a GitHub Actions pipeline: plan on every pull request, apply only after I approve it, no AWS keys stored in GitHub.
 
-**Contents:** [Architecture](#architecture) | [Services](#services-used) | [Problems I ran into](#problems-i-ran-into) | [Observability](#observability-and-why-i-care-about-it-now) | [Decisions](#decisions-i-made-and-what-i-gave-up) | [Cost](#rough-cost-breakdown) | [Running it](#running-it) | [What I learned](#what-i-learned)
+**Contents:** [Architecture](#architecture) | [Services](#services-used) | [Problems I ran into](#problems-i-ran-into) | [Observability](#observability-and-why-i-care-about-it-now) | [CI/CD pipeline](#cicd-pipeline) | [Decisions](#decisions-i-made-and-what-i-gave-up) | [Cost](#rough-cost-breakdown) | [Running it](#running-it) | [What I learned](#what-i-learned)
 
 ---
 ## Why I built this
@@ -282,6 +282,25 @@ CloudTrail records every AWS API call, so "who deleted the database" has an answ
 
 ---
 
+## CI/CD pipeline
+
+I used to run `terraform apply` from my laptop. Now everything goes through GitHub Actions, and I don't run apply myself anymore.
+
+- **On a pull request:** fmt, validate, a Checkov security scan and `terraform plan`. The plan gets posted as a comment on the PR.
+- **On merge to `main`:** the same checks, then apply waits in a GitHub Environment called `production` until I approve it.
+- **No AWS keys in GitHub.** It logs in with OIDC. Plan uses a read-only role. Apply uses a separate role that only the approved `production` job can assume.
+- **Checkov:** the first run found 39 issues. I fixed 9, wrote a reason next to each of the other 30 in the code, and made the scan block merges. Now it's 0 failed.
+
+To test it, I rejected the first deployment (nothing got built), then re-ran it and approved. 49 resources in about 14 minutes, created by the pipeline's role, not my IAM user. Destroyed it straight after.
+
+![Plan posted on the PR](screenshots/29-pr-plan-comment.png)
+
+![Apply waiting for approval](screenshots/30-approval-gate.png)
+
+Why it's set up this way, the 9 fixes, and what tripped me up: [PIPELINE.md](PIPELINE.md)
+
+---
+
 ## Decisions I made, and what I gave up
 
 **Remote state on S3.** Local state is fine on one laptop. It falls apart as soon as a second person or a pipeline runs Terraform — two applies at once silently overwrite each other's record of what exists, and a lost state file means AWS resources Terraform can no longer destroy. The cost is that the bucket has to be created by hand first.
@@ -312,13 +331,20 @@ RDS and NAT Gateway charge even when idle, so `terraform destroy` after testing.
 
 ## Running it
 
+Normally through the pipeline: open a pull request, read the plan comment, merge, then approve the `production` deployment in the Actions tab.
+
+First-time setup, done once by hand:
+- an S3 bucket for state (chicken and egg)
+- `terraform apply` in `bootstrap/` to create the two OIDC roles
+- a GitHub Environment called `production` with a required reviewer
+
+It still runs locally too, with your own AWS credentials:
+
 ```bash
 terraform init
 terraform plan
 terraform apply
 ```
-
-You'll need an S3 bucket for state (created by hand, chicken and egg) and AWS credentials set up.
 
 `terraform output alb_dns_name` gives you the URL.
 
@@ -334,9 +360,11 @@ Stuff production would need that this doesn't have. I know these are missing —
 
 **No deletion protection on RDS.** I set `deletion_protection = false` and `skip_final_snapshot = true` so `terraform destroy` would actually work while I was testing. As it stands, if someone deleted the `aws_db_instance` block and ran apply, the database would just be gone — no confirmation, no backup. In production both would be the other way round, plus a `prevent_destroy` lifecycle rule so Terraform itself refuses. It's deliberate but it's the first thing anyone reviewing this would point at.
 
-**No CI.** I run `terraform apply` from my laptop. For one person on one project that's honestly fine. It breaks down when two people can both apply, when nobody's reviewing a change that says `1 to destroy` on the production database, and when there's no record of who applied what.
+**Apply doesn't reuse the plan I approved.** The proper way is `terraform plan -out` and then applying that exact file. But the plan file has the DB password in plain text, and getting it from the plan job to the apply job means uploading it as an artifact on a public repo. So the apply job runs its own plan right after I approve. If something changed in AWS in those few minutes, what gets applied could be different from what I read. The fix would be encrypting the plan file or passing it through a private S3 bucket.
 
-The way it should work is: open a pull request, CI runs `plan`, the plan output shows up as a comment, someone reads it, and apply only runs after they approve. The part I'd stress is that auto-applying on every push is worse than having no pipeline at all — a bad variable can destroy an RDS instance with nobody having looked at the diff. A broken app can be rolled back in minutes. A deleted database cannot. The person reading the plan is the whole point.
+**Destroy still runs from my laptop.** The pipeline builds everything, but tearing it down is still `terraform destroy` with my own IAM keys. A manual destroy workflow behind the same approval gate would mean my laptop doesn't need admin keys for this at all.
+
+**The apply role is AdministratorAccess.** Reasoning is in the pipeline section. A permissions boundary would tighten it, but the trust policy is doing the real work for now.
 
 **One NAT Gateway.** Only one, sitting in us-east-1a. If that AZ goes down, the private instances in us-east-1b lose outbound internet even though they're still running. NAT is about $32/month and it's the most expensive thing in the build, so I went with one to save money. Production would have one per AZ, with each private subnet routing to the NAT in its own AZ. It's a single point of failure and I picked it on purpose.
 
