@@ -1,7 +1,7 @@
 # AWS Three-Tier Infrastructure with Terraform
-> **TL;DR:** 47 AWS resources defined in Terraform: a VPC across 2 AZs, ALB + Auto Scaling, Multi-AZ RDS MySQL, Secrets Manager, Session Manager (no SSH), VPC Flow Logs and CloudTrail. Remote state in S3 with locking. Deployed through a GitHub Actions pipeline: plan on every pull request, apply only after I approve it, no AWS keys stored in GitHub.
+> **TL;DR:** 49 AWS resources defined in Terraform: a VPC across 2 AZs, ALB + Auto Scaling, Multi-AZ RDS MySQL, Secrets Manager, Session Manager (no SSH), VPC Flow Logs and CloudTrail. Remote state in S3 with locking. Deployed through a GitHub Actions pipeline: plan on every pull request, apply only after I approve it, no AWS keys stored in GitHub. Code is split into files by layer, and the VPC is its own reusable Terraform module (moved in with `moved` blocks, nothing recreated).
 
-**Contents:** [Architecture](#architecture) | [Services](#services-used) | [Problems I ran into](#problems-i-ran-into) | [Observability](#observability-and-why-i-care-about-it-now) | [CI/CD pipeline](#cicd-pipeline) | [Decisions](#decisions-i-made-and-what-i-gave-up) | [Cost](#rough-cost-breakdown) | [Running it](#running-it) | [What I learned](#what-i-learned)
+**Contents:** [Architecture](#architecture) | [Services](#services-used) | [Problems I ran into](#problems-i-ran-into) | [Observability](#observability-and-why-i-care-about-it-now) | [CI/CD pipeline](#cicd-pipeline) | [Code layout](#code-layout-and-the-vpc-module) | [Decisions](#decisions-i-made-and-what-i-gave-up) | [Cost](#rough-cost-breakdown) | [Running it](#running-it) | [What I learned](#what-i-learned)
 
 ---
 ## Why I built this
@@ -301,6 +301,26 @@ Why it's set up this way, the 9 fixes, and what tripped me up: [PIPELINE.md](PIP
 
 ---
 
+## Code layout and the VPC module
+
+Everything used to be in one `main.tf`, about 830 lines. I split it into files by layer and moved the VPC into its own module.
+
+```
+├── network.tf  compute.tf  database.tf  observability.tf
+├── moved.tf              # old address -> new address
+└── modules/vpc/          # VPC, subnets, IGW, NAT, route tables
+    └── main.tf  variables.tf  outputs.tf  README.md
+```
+
+- **Splitting the file changed nothing.** Terraform reads every `.tf` file in a folder as one. I ran plan before and after the split and the output was identical.
+- **Moving into a module is the risky part.** `aws_vpc.main` becomes `module.vpc.aws_vpc.this`, and Terraform's default is to destroy the old one and build a new one. `moved.tf` tells it they're the same thing. The plan came back with 12 "has moved" lines and 0 to destroy, and the VPC kept its ID.
+
+![Module PR plan](screenshots/34-module-pr-plan.png)
+
+Only the VPC is a module, because it's the one piece I'd reuse in another project. How I tested it, why Windows line endings made the plans look different, and why Terraform refused a half-done move: [REFACTOR.md](REFACTOR.md)
+
+---
+
 ## Decisions I made, and what I gave up
 
 **Remote state on S3.** Local state is fine on one laptop. It falls apart as soon as a second person or a pipeline runs Terraform — two applies at once silently overwrite each other's record of what exists, and a lost state file means AWS resources Terraform can no longer destroy. The cost is that the bucket has to be created by hand first.
@@ -309,7 +329,7 @@ Every tutorial says to use a DynamoDB table for locking. I did, then Terraform 1
 
 **Security groups reference each other, not IP ranges.** `security_groups = [aws_security_group.alb.id]` is an identity, not an address. The ALB's IP changes as AWS scales it — a CIDR rule would silently break. And every EC2 the ASG launches automatically gets SG-App, so it's covered the moment it exists.
 
-**Flat files, no modules.** Modules are for reusing code across environments. I've got one environment. Modules would just mean jumping between more files to trace a single resource. If I add staging later I'll have to refactor, which is fine.
+**One module, not five.** I started with everything flat in one `main.tf`, because I had one environment and modules felt like overkill. Later I split it by layer and moved the VPC into a module, since a VPC with public and private subnets is the same in pretty much any project. I left compute, database and logging in the root. They only make sense for this app, and a module nobody reuses is just an extra folder to click through. If I add a staging environment, the next step would be an `envs/dev` and `envs/prod` folder, each calling the same module with its own tfvars and its own state key.
 
 **`default_tags` on the provider.** Every resource gets `ManagedBy = Terraform` automatically. Right after the first apply I briefly saw 2 VPCs and 12 subnets in the console — my old manual build sitting alongside the Terraform one. That tag was the only reliable way to tell them apart.
 
@@ -393,6 +413,8 @@ And then I hit three new problems anyway, which is the honest version of this. W
 ## Notes
 
 Full decision log and debugging notes: [DECISIONS.md](DECISIONS.md)
+
+VPC module inputs and outputs: [modules/vpc/README.md](modules/vpc/README.md)
 
 More screenshots in [screenshots/](screenshots/) — target group health, Session Manager, CloudTrail, remote state in S3, the full destroy and rebuild.
 
