@@ -4,6 +4,8 @@ These are the working notes I kept while rebuilding my three-tier AWS setup with
 
 The main writeup is in the [README](README.md). This is the longer version, with the reasoning behind each choice.
 
+> **Note:** these notes are from the original build, when the stack was 47 resources in one `main.tf`. It's 49 now (two added by the security fixes, see [PIPELINE.md](PIPELINE.md)), and the code has since been split by layer with the VPC in its own module (see [REFACTOR.md](REFACTOR.md)). I've left the numbers below as they were at the time.
+
 ---
 
 # What Terraform is, in one paragraph
@@ -49,6 +51,8 @@ Terraform lets me split my code into reusable chunks. That's useful when there a
 I have one environment. Splitting it up would just mean jumping between more files to find one thing. So I kept it flat and readable.
 
 **What I gave up:** if I add a test environment later, I'll have to restructure it. That's fine.
+
+**Update:** I changed this later. Once `main.tf` reached about 830 lines, finding anything meant scrolling, so I split it into `network.tf`, `compute.tf`, `database.tf` and `observability.tf`. I also moved the VPC into its own module (`modules/vpc`), because a VPC with public and private subnets is the same in pretty much any project. Compute, database and logging stayed in the root, since they only make sense for this app. I used `moved` blocks so nothing got destroyed and recreated. The full story is in [REFACTOR.md](REFACTOR.md).
 
 ---
 
@@ -325,7 +329,7 @@ And **nobody typed a password.** Terraform generated a fresh random one, gave it
 | Network (subnets, gateways, routing) | 18 | 2m 39s |
 | Security rules | 3 | seconds |
 | Servers + load balancer | 6 | 3m 10s |
-| Database + permissions | 12 | 16m 32s |
+| Database + permissions | 9 | 16m 32s |
 | Logging | 11 | ~2m |
 | **Total** | **47** | |
 

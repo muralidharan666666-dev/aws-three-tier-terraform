@@ -10,7 +10,7 @@ I'd already built this same three-tier setup by hand in the AWS console. It work
 
 I fixed both by hand. Then I wanted to rebuild the whole thing in Terraform, mainly so those two mistakes couldn't happen again.
 
-Took me about two days. Ended up with 47 AWS resources managed as code, and I can destroy the whole thing and rebuild it in about 15 minutes with one command. Hit three more problems I hadn't seen before — those are written up below too.
+Took me about two days. Ended up with 47 AWS resources managed as code (49 now, after two more came in with the security fixes, see [PIPELINE.md](PIPELINE.md)), and I can destroy the whole thing and rebuild it in about 15 minutes with one command. Hit three more problems I hadn't seen before — those are written up below too.
 
 Manual console version: [aws-three-tier-web-application](https://github.com/muralidharan666666-dev/aws-three-tier-web-application)
 
@@ -145,7 +145,7 @@ I don't know the database password. Terraform generates 24 random characters, ha
 
 ![Rebuild](screenshots/28-terraform-rebuild.png)
 
-All 47 resources back in 15 minutes 36 seconds. New ALB DNS, new VPC ID, new database password — identical configuration. Zero console clicks.
+All 47 resources (the count at that point, before the security fixes) back in 15 minutes 36 seconds. New ALB DNS, new VPC ID, new database password — identical configuration. Zero console clicks.
 
 ---
 
@@ -426,7 +426,7 @@ Terraform v1.15.8, AWS provider v5.100.0, us-east-1
 
 **Muralidharan M N**
 
-AWS Certified Cloud Practitioner | AWS re/Start Graduate
+AWS Certified Cloud Practitioner | HashiCorp Certified: Terraform Associate | AWS re/Start Graduate
 
 LinkedIn: https://www.linkedin.com/in/muralidharan-m-n-78a2522b8
 
